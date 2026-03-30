@@ -6,24 +6,47 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Раздаём файлы (html, js)
 app.use(express.static(__dirname));
 
-// Подключения
 io.on("connection", (socket) => {
-  console.log("client connected");
+  console.log("client connected:", socket.id);
 
-  // При движении — отправляем всем остальным
-  socket.on("move", (data) => {
-    socket.broadcast.emit("move", data);
+  socket.on("strokeStart", (data) => {
+    io.emit("strokeStart", {
+      id: socket.id,
+      x: data.x,
+      y: data.y,
+      color: data.color,
+      lineWidth: data.lineWidth || 6,
+    });
+  });
+
+  socket.on("strokeMove", (data) => {
+    io.emit("strokeMove", {
+      id: socket.id,
+      x: data.x,
+      y: data.y,
+      color: data.color,
+      lineWidth: data.lineWidth || 6,
+    });
+  });
+
+  socket.on("strokeEnd", () => {
+    io.emit("strokeEnd", {
+      id: socket.id,
+    });
+  });
+
+  socket.on("clearCanvas", () => {
+    io.emit("clearCanvas");
   });
 
   socket.on("disconnect", () => {
-    console.log("client disconnected");
+    console.log("client disconnected:", socket.id);
+    io.emit("strokeEnd", { id: socket.id });
   });
 });
 
-// 🔥 ВАЖНО: порт для Render
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {

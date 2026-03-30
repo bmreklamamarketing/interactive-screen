@@ -2,89 +2,281 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Controller</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
-      height: 100%;
-      font-family: sans-serif;
-      background: #f3f3f3;
+      background: #f4f4f4;
+      font-family: Arial, sans-serif;
+      touch-action: none;
     }
 
     .wrap {
-      padding: 20px;
+      padding: 16px;
     }
 
     h1 {
+      font-size: 34px;
+      line-height: 1.05;
       margin: 0 0 16px;
-      font-size: 40px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .color {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      border: 3px solid transparent;
+      cursor: pointer;
+      box-sizing: border-box;
+    }
+
+    .color.active {
+      border-color: #111;
+      transform: scale(1.08);
+    }
+
+    .btn {
+      border: none;
+      background: #111;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .btn.light {
+      background: #ddd;
+      color: #111;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
     }
 
     #pad {
       width: 100%;
-      height: 60vh;
+      height: 62vh;
+      display: block;
+      border-radius: 14px;
       background: white;
-      border: 2px solid #ccc;
-      border-radius: 16px;
+      border: 2px solid #ddd;
       touch-action: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #666;
-      font-size: 20px;
-      user-select: none;
     }
 
-    #status {
-      margin-top: 16px;
-      font-size: 18px;
+    .status {
+      margin-top: 12px;
+      color: #555;
+      font-size: 15px;
+    }
+
+    .sub {
+      margin: 8px 0 0;
+      color: #666;
+      font-size: 14px;
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Управление экраном</h1>
-    <div id="pad">Води пальцем здесь</div>
-    <div id="status">Ожидание касания</div>
+    <h1>Управление<br>экраном</h1>
+
+    <div class="toolbar">
+      <button class="color active" data-color="#ffffff" style="background:#ffffff; box-shadow: inset 0 0 0 1px #bbb;"></button>
+      <button class="color" data-color="#ff3b30" style="background:#ff3b30;"></button>
+      <button class="color" data-color="#ff9500" style="background:#ff9500;"></button>
+      <button class="color" data-color="#ffcc00" style="background:#ffcc00;"></button>
+      <button class="color" data-color="#34c759" style="background:#34c759;"></button>
+      <button class="color" data-color="#007aff" style="background:#007aff;"></button>
+      <button class="color" data-color="#af52de" style="background:#af52de;"></button>
+      <button class="btn light" id="clearBtn">Очистить</button>
+    </div>
+
+    <div class="panel">
+      <canvas id="pad"></canvas>
+      <div class="status" id="status">Води пальцем внутри поля</div>
+      <div class="sub">На телефоне ты видишь то, что рисуешь, и то же самое уходит на экран.</div>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    const pad = document.getElementById("pad");
-    const statusEl = document.getElementById("status");
 
-    function sendTouch(clientX, clientY) {
+    const pad = document.getElementById("pad");
+    const ctx = pad.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const colorButtons = document.querySelectorAll(".color");
+    const clearBtn = document.getElementById("clearBtn");
+
+    let currentColor = "#ffffff";
+    let lineWidth = 6;
+    let drawing = false;
+    let lastPoint = null;
+
+    function resizePad() {
+      const rect = pad.getBoundingClientRect();
+      const oldImage = document.createElement("canvas");
+      oldImage.width = pad.width || 1;
+      oldImage.height = pad.height || 1;
+      oldImage.getContext("2d").drawImage(pad, 0, 0);
+
+      pad.width = rect.width * window.devicePixelRatio;
+      pad.height = rect.height * window.devicePixelRatio;
+
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      if (oldImage.width > 1 && oldImage.height > 1) {
+        ctx.drawImage(oldImage, 0, 0, rect.width, rect.height);
+      }
+    }
+
+    function getLocalPoint(clientX, clientY) {
       const rect = pad.getBoundingClientRect();
 
-      let x = (clientX - rect.left) / rect.width;
-      let y = (clientY - rect.top) / rect.height;
+      let x = clientX - rect.left;
+      let y = clientY - rect.top;
 
-      x = Math.max(0, Math.min(1, x));
-      y = Math.max(0, Math.min(1, y));
+      x = Math.max(0, Math.min(rect.width, x));
+      y = Math.max(0, Math.min(rect.height, y));
 
-      socket.emit("move", { x, y });
-      statusEl.textContent = `x: ${x.toFixed(2)}, y: ${y.toFixed(2)}`;
+      return {
+        localX: x,
+        localY: y,
+        normalizedX: x / rect.width,
+        normalizedY: y / rect.height
+      };
     }
+
+    function drawDot(x, y, color, width) {
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.arc(x, y, width / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawLine(fromX, fromY, toX, toY, color, width) {
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toX, toY);
+      ctx.stroke();
+    }
+
+    function startStroke(clientX, clientY) {
+      const p = getLocalPoint(clientX, clientY);
+
+      drawing = true;
+      lastPoint = p;
+
+      drawDot(p.localX, p.localY, currentColor, lineWidth);
+
+      socket.emit("strokeStart", {
+        x: p.normalizedX,
+        y: p.normalizedY,
+        color: currentColor,
+        lineWidth
+      });
+
+      statusEl.textContent = "Рисование...";
+    }
+
+    function moveStroke(clientX, clientY) {
+      if (!drawing || !lastPoint) return;
+
+      const p = getLocalPoint(clientX, clientY);
+
+      drawLine(
+        lastPoint.localX,
+        lastPoint.localY,
+        p.localX,
+        p.localY,
+        currentColor,
+        lineWidth
+      );
+
+      socket.emit("strokeMove", {
+        x: p.normalizedX,
+        y: p.normalizedY,
+        color: currentColor,
+        lineWidth
+      });
+
+      lastPoint = p;
+    }
+
+    function endStroke() {
+      if (!drawing) return;
+
+      drawing = false;
+      lastPoint = null;
+      socket.emit("strokeEnd");
+      statusEl.textContent = "Готово. Можно рисовать дальше";
+    }
+
+    colorButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        colorButtons.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentColor = btn.dataset.color;
+      });
+    });
+
+    clearBtn.addEventListener("click", () => {
+      ctx.clearRect(0, 0, pad.width, pad.height);
+      socket.emit("clearCanvas");
+      statusEl.textContent = "Очищено";
+    });
 
     pad.addEventListener("touchstart", (e) => {
       e.preventDefault();
       const touch = e.touches[0];
-      sendTouch(touch.clientX, touch.clientY);
+      startStroke(touch.clientX, touch.clientY);
     }, { passive: false });
 
     pad.addEventListener("touchmove", (e) => {
       e.preventDefault();
       const touch = e.touches[0];
-      sendTouch(touch.clientX, touch.clientY);
+      moveStroke(touch.clientX, touch.clientY);
     }, { passive: false });
 
-    pad.addEventListener("mousemove", (e) => {
-      if (e.buttons !== 1) return;
-      sendTouch(e.clientX, e.clientY);
+    pad.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      endStroke();
+    }, { passive: false });
+
+    pad.addEventListener("mousedown", (e) => {
+      startStroke(e.clientX, e.clientY);
     });
+
+    window.addEventListener("mousemove", (e) => {
+      if (drawing) moveStroke(e.clientX, e.clientY);
+    });
+
+    window.addEventListener("mouseup", () => {
+      endStroke();
+    });
+
+    resizePad();
+    window.addEventListener("resize", resizePad);
   </script>
 </body>
 </html>

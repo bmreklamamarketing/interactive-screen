@@ -1,37 +1,96 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Screen</title>
-</head>
-<body style="margin:0; overflow:hidden; background:black;">
-  <canvas id="c"></canvas>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  const canvas = document.getElementById("screenCanvas");
+  const ctx = canvas.getContext("2d");
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
+  const lastPoints = new Map();
 
-    const canvas = document.getElementById("c");
-    const ctx = canvas.getContext("2d");
+  // ⏱ таймер автоочистки
+  let clearTimer = null;
+  const CLEAR_DELAY = 40000; // 40 секунд
 
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+  function resetClearTimer() {
+    if (clearTimer) clearTimeout(clearTimer);
+
+    clearTimer = setTimeout(() => {
+      clearCanvas();
+    }, CLEAR_DELAY);
+  }
+
+  function clearCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    lastPoints.clear();
+  }
+
+  function resizeCanvas() {
+    const imageData = ctx.getImageData(0, 0, canvas.width || 1, canvas.height || 1);
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    if (imageData.width > 1 && imageData.height > 1) {
+      ctx.putImageData(imageData, 0, 0);
     }
 
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  }
 
-    socket.on("move", (data) => {
-      const x = data.x * canvas.width;
-      const y = data.y * canvas.height;
+  function drawDot(x, y, color, lineWidth) {
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(x, y, lineWidth / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-      ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  </script>
-</body>
-</html>
+  function drawLine(fromX, fromY, toX, toY, color, lineWidth) {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+  }
+
+  resizeCanvas();
+  window.addEventListener("resize", resizeCanvas);
+
+  socket.on("strokeStart", (data) => {
+    resetClearTimer();
+
+    const x = data.x * canvas.width;
+    const y = data.y * canvas.height;
+
+    lastPoints.set(data.id, { x, y, color: data.color, lineWidth: data.lineWidth });
+    drawDot(x, y, data.color, data.lineWidth);
+  });
+
+  socket.on("strokeMove", (data) => {
+    resetClearTimer();
+
+    const x = data.x * canvas.width;
+    const y = data.y * canvas.height;
+
+    const prev = lastPoints.get(data.id);
+
+    if (prev) {
+      drawLine(prev.x, prev.y, x, y, data.color, data.lineWidth);
+    } else {
+      drawDot(x, y, data.color, data.lineWidth);
+    }
+
+    lastPoints.set(data.id, { x, y, color: data.color, lineWidth: data.lineWidth });
+  });
+
+  socket.on("strokeEnd", (data) => {
+    lastPoints.delete(data.id);
+  });
+
+  socket.on("clearCanvas", () => {
+    clearCanvas();
+  });
+
+  // запускаем таймер при загрузке
+  resetClearTimer();
+</script>
