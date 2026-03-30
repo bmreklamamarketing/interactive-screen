@@ -1,96 +1,144 @@
-<script src="/socket.io/socket.io.js"></script>
-<script>
-  const socket = io();
-  const canvas = document.getElementById("screenCanvas");
-  const ctx = canvas.getContext("2d");
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Screen</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
 
-  const lastPoints = new Map();
+    #screenCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
 
-  // ⏱ таймер автоочистки
-  let clearTimer = null;
-  const CLEAR_DELAY = 40000; // 40 секунд
+    .hint {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      color: white;
+      font-family: Arial, sans-serif;
+      font-size: 18px;
+      opacity: 0.85;
+      background: rgba(0,0,0,0.35);
+      padding: 10px 14px;
+      border-radius: 12px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">Рисуй на телефоне</div>
+  <canvas id="screenCanvas"></canvas>
 
-  function resetClearTimer() {
-    if (clearTimer) clearTimeout(clearTimer);
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const canvas = document.getElementById("screenCanvas");
+    const ctx = canvas.getContext("2d");
 
-    clearTimer = setTimeout(() => {
+    const lastPoints = new Map();
+    let clearTimer = null;
+    const CLEAR_DELAY = 40000;
+
+    function setCanvasSize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+    }
+
+    function resetClearTimer() {
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(() => {
+        clearCanvas();
+      }, CLEAR_DELAY);
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      lastPoints.clear();
+    }
+
+    function drawDot(x, y, color, lineWidth) {
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.arc(x, y, Math.max(2, lineWidth / 2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawLine(x1, y1, x2, y2, color, lineWidth) {
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    setCanvasSize();
+    window.addEventListener("resize", setCanvasSize);
+
+    socket.on("connect", () => {
+      console.log("screen connected");
+    });
+
+    socket.on("strokeStart", (data) => {
+      resetClearTimer();
+
+      const x = data.x * canvas.width;
+      const y = data.y * canvas.height;
+
+      lastPoints.set(data.id, {
+        x,
+        y,
+        color: data.color,
+        lineWidth: data.lineWidth || 6
+      });
+
+      drawDot(x, y, data.color, data.lineWidth || 6);
+    });
+
+    socket.on("strokeMove", (data) => {
+      resetClearTimer();
+
+      const x = data.x * canvas.width;
+      const y = data.y * canvas.height;
+      const prev = lastPoints.get(data.id);
+
+      if (prev) {
+        drawLine(prev.x, prev.y, x, y, data.color, data.lineWidth || 6);
+      } else {
+        drawDot(x, y, data.color, data.lineWidth || 6);
+      }
+
+      lastPoints.set(data.id, {
+        x,
+        y,
+        color: data.color,
+        lineWidth: data.lineWidth || 6
+      });
+    });
+
+    socket.on("strokeEnd", (data) => {
+      lastPoints.delete(data.id);
+    });
+
+    socket.on("clearCanvas", () => {
       clearCanvas();
-    }, CLEAR_DELAY);
-  }
+      resetClearTimer();
+    });
 
-  function clearCanvas() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    lastPoints.clear();
-  }
-
-  function resizeCanvas() {
-    const imageData = ctx.getImageData(0, 0, canvas.width || 1, canvas.height || 1);
-
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    if (imageData.width > 1 && imageData.height > 1) {
-      ctx.putImageData(imageData, 0, 0);
-    }
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-  }
-
-  function drawDot(x, y, color, lineWidth) {
-    ctx.beginPath();
-    ctx.fillStyle = color;
-    ctx.arc(x, y, lineWidth / 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawLine(fromX, fromY, toX, toY, color, lineWidth) {
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.moveTo(fromX, fromY);
-    ctx.lineTo(toX, toY);
-    ctx.stroke();
-  }
-
-  resizeCanvas();
-  window.addEventListener("resize", resizeCanvas);
-
-  socket.on("strokeStart", (data) => {
     resetClearTimer();
-
-    const x = data.x * canvas.width;
-    const y = data.y * canvas.height;
-
-    lastPoints.set(data.id, { x, y, color: data.color, lineWidth: data.lineWidth });
-    drawDot(x, y, data.color, data.lineWidth);
-  });
-
-  socket.on("strokeMove", (data) => {
-    resetClearTimer();
-
-    const x = data.x * canvas.width;
-    const y = data.y * canvas.height;
-
-    const prev = lastPoints.get(data.id);
-
-    if (prev) {
-      drawLine(prev.x, prev.y, x, y, data.color, data.lineWidth);
-    } else {
-      drawDot(x, y, data.color, data.lineWidth);
-    }
-
-    lastPoints.set(data.id, { x, y, color: data.color, lineWidth: data.lineWidth });
-  });
-
-  socket.on("strokeEnd", (data) => {
-    lastPoints.delete(data.id);
-  });
-
-  socket.on("clearCanvas", () => {
-    clearCanvas();
-  });
-
-  // запускаем таймер при загрузке
-  resetClearTimer();
-</script>
+  </script>
+</body>
+</html>
